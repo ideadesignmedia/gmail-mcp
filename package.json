@@ -1,0 +1,36 @@
+{
+  "name": "@ideadesignmedia/gmail-mcp",
+  "version": "0.1.0",
+  "description": "Private MCP server and CLI for linking multiple Gmail inboxes and operating over them",
+  "license": "MIT",
+  "bin": {
+    "gmail-mcp": "dist/bin/gmail-mcp.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "ts-node ./bin/gmail-mcp.ts start",
+    "start": "node dist/bin/gmail-mcp.js start",
+    "clean": "rimraf dist"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "dependencies": {
+    "@ideadesignmedia/open-ai.js": "^2.2.0",
+    "commander": "^12.1.0",
+    "googleapis": "^144.0.0",
+    "open": "^10.1.0",
+    "sqlite3": "^5.1.7",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/commander": "^2.12.5",
+    "@types/node": "^22.7.5",
+    "@types/sqlite3": "^3.1.11",
+    "rimraf": "^6.0.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}
