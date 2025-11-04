@@ -1,84 +1,227 @@
 # @ideadesignmedia/gmail-mcp
 
-Private MCP server and CLI that links multiple Gmail inboxes and exposes tools over stdio. Tokens are stored in SQLite. You can lock the database with a password so the server and all commands require a pass before use.
+Private MCP server and CLI that links multiple Gmail inboxes and exposes tools over stdio. Tokens are stored in SQLite and can be encrypted-at-rest with a password. When locked, every command and the MCP server require a password to run.
 
-## Install
+- Transport: stdio (suitable for MCP clients that launch a local command)
+- Default DB: `~/.idm/gmail-mcp/db.sqlite`
+- Node requirement: >= 18.17
+
+## Run with npx (recommended)
+
+You do not need to install anything globally. Use `npx` to run the CLI and server. On first run, `npx` will download the package; later runs use the cached copy.
+
+Show help:
 
 ```bash
-npm i -g @ideadesignmedia/gmail-mcp
-# or as npx on first run
 npx @ideadesignmedia/gmail-mcp --help
 ```
 
-## Quick start
-
-1. Choose a SQLite path or accept the default.
-2. Link an account with your Google OAuth client.
-3. Lock the database with a password if you want strict access control.
-4. Start the server.
+Add an account (loopback OAuth):
 
 ```bash
-# Add an account using loopback auth
-gmail-mcp add --client-id $GOOGLE_CLIENT_ID --client-secret $GOOGLE_CLIENT_SECRET
+# Define or export your Google OAuth client credentials
+export GOOGLE_CLIENT_ID=your_client_id
+export GOOGLE_CLIENT_SECRET=your_client_secret
 
-# Or device flow if headless
-gmail-mcp add --device --client-id $GOOGLE_CLIENT_ID --client-secret $GOOGLE_CLIENT_SECRET
-
-# Lock the DB so every command and the server require a password
-gmail-mcp passwd --pass 'your-strong-pass'
-
-# Start MCP server over stdio
-export GMAIL_MCP_DB_PASS='your-strong-pass'
-gmail-mcp start
+# Start the OAuth flow and link the Gmail account
+npx -y @ideadesignmedia/gmail-mcp add \
+  --client-id "$GOOGLE_CLIENT_ID" \
+  --client-secret "$GOOGLE_CLIENT_SECRET"
 ```
 
-Defaults:
-- DB path: `~/.idm/gmail-mcp/db.sqlite`
-- Password can be passed with `--pass` or `GMAIL_MCP_DB_PASS`.
-- When the database is locked you must provide a password for all commands.
-- When unlocked you can operate without a password. Lock any time with `gmail-mcp passwd`.
+Add an account (device code flow; headless-safe):
 
-## CLI
+```bash
+export GOOGLE_CLIENT_ID=your_client_id
+export GOOGLE_CLIENT_SECRET=your_client_secret
 
-```
-gmail-mcp [start] [--db <path>] [--pass <pass>] [--read-only]
-gmail-mcp add [--db <path>] [--pass <pass>] [--client-id ...] [--client-secret ...] [--device]
-gmail-mcp list [--db <path>] [--pass <pass>]
-gmail-mcp remove <email|id> [--db <path>] [--pass <pass>]
-gmail-mcp passwd [--db <path>] [--pass <new>] [--rotate] [--old-pass <old>] [--hint <text>]
+npx -y @ideadesignmedia/gmail-mcp add \
+  --device \
+  --client-id "$GOOGLE_CLIENT_ID" \
+  --client-secret "$GOOGLE_CLIENT_SECRET"
 ```
 
-## MCP tools
+Lock the database with a password:
 
-- `list_accounts()`
-- `search_mail({ query, account?, limit? })`
-- `get_message({ account, messageId, body? })`
-- `get_thread({ account, threadId, body? })`
-- `download_attachment({ account, messageId, attachmentId })`
-- `label_message({ account, messageId, add?, remove? })`
-- `send_message({ account, to, subject, text?, html?, replyToMessageId? })`
+```bash
+npx -y @ideadesignmedia/gmail-mcp passwd --pass 'your-strong-pass'
+```
 
-`account` accepts email or internal id.
+Start the MCP server over stdio (for your MCP client to launch):
+
+```bash
+export GMAIL_MCP_DB_PASS='your-strong-pass'   # only required if the DB is locked
+npx -y @ideadesignmedia/gmail-mcp start
+```
+
+Notes for `npx` usage:
+
+- `-y` auto-confirms the download prompt on first run.
+- You can pass `--db /custom/path.sqlite` to store the database elsewhere.
+- Use `--read-only` with `start` to disable write actions (send/label modify).
+
+## Quick start (end‑to‑end)
+
+1) Create a Google OAuth client (see "Google OAuth setup").
+
+2) Link one or more Gmail accounts:
+
+```bash
+export GOOGLE_CLIENT_ID=...
+export GOOGLE_CLIENT_SECRET=...
+npx -y @ideadesignmedia/gmail-mcp add --client-id "$GOOGLE_CLIENT_ID" --client-secret "$GOOGLE_CLIENT_SECRET"
+```
+
+3) (Optional but recommended) Lock the DB with a password so tokens are encrypted at rest:
+
+```bash
+npx -y @ideadesignmedia/gmail-mcp passwd --pass 'your-strong-pass'
+```
+
+4) Point your MCP client to run the server command. Most clients let you configure a command, arguments, and environment variables. An example configuration looks like:
+
+```jsonc
+{
+  "command": "npx",
+  "args": ["-y", "@ideadesignmedia/gmail-mcp", "start", "--read-only"],
+  "env": { "GMAIL_MCP_DB_PASS": "your-strong-pass" }
+}
+```
+
+Exact configuration format depends on your MCP client. The server speaks stdio.
+
+5) Use the tools provided by the server from your MCP client (see "MCP tools").
+
+## CLI reference
+
+Global options (apply to all commands unless stated otherwise):
+
+- `--db <path>`: SQLite DB path (default `~/.idm/gmail-mcp/db.sqlite`)
+- `--pass <pass>`: Database password or new password (also available via `GMAIL_MCP_DB_PASS`)
+- `--read-only`: Start server with write operations disabled (only used by `start`)
+
+Commands:
+
+```bash
+# Start the MCP server over stdio
+npx -y @ideadesignmedia/gmail-mcp start [--db <path>] [--pass <pass>] [--read-only]
+
+# Link a Gmail account (loopback or device flow)
+npx -y @ideadesignmedia/gmail-mcp add \
+  [--db <path>] [--pass <pass>] \
+  [--client-id <id>] [--client-secret <secret>] [--device] [--listen-port <port>]
+
+# List linked accounts
+npx -y @ideadesignmedia/gmail-mcp list [--db <path>] [--pass <pass>]
+
+# Remove an account (by email or id)
+npx -y @ideadesignmedia/gmail-mcp remove <email|id> [--db <path>] [--pass <pass>]
+
+# Lock the DB, set password, or rotate existing password
+npx -y @ideadesignmedia/gmail-mcp passwd [--db <path>] [--pass <new>] [--rotate] [--old-pass <old>] [--hint <text>]
+```
+
+Behavioral details:
+
+- When the DB is locked, all commands require a password (`--pass` or `GMAIL_MCP_DB_PASS`).
+- When unlocked, you can operate without a password and lock later with `passwd`.
+- `passwd --rotate --old-pass <old> --pass <new>` rotates the encryption KEK without re‑adding accounts.
+- `start --read-only` disables `send_message` and `label_message` tools and prevents modification APIs.
 
 ## Google OAuth setup
 
-Create OAuth client credentials in Google Cloud Console. For loopback add a redirect like `http://127.0.0.1:43112/oauth2/callback`. For device flow no redirect is needed.
+Create a Web application OAuth client in Google Cloud Console and enable the Gmail API.
 
-Scopes used by default:
-- gmail.readonly
-- gmail.modify
-- gmail.send
+Loopback (default) flow requirements:
 
-You can run the server in `--read-only` mode which disables send and modify tools at registration time.
+- Authorized redirect URI: `http://127.0.0.1:43112/oauth2/callback`
+- Scopes requested by this tool:
+  - `https://www.googleapis.com/auth/gmail.readonly`
+  - `https://www.googleapis.com/auth/gmail.modify`
+  - `https://www.googleapis.com/auth/gmail.send`
+  - `openid`, `email`, `profile` (used to fetch the account email/id on first link)
 
-## Environment
+Device code flow (headless) requirements:
 
-- `GMAIL_MCP_DB_PASS` optional and required if DB is locked
-- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` for `add` if not passed as flags
+- No redirect URI needed. You will be shown a verification URL and user code to enter in a browser.
 
-## Notes
+Tips:
 
-- This server is private by design. Anyone who can invoke it has full access to the linked accounts.
-- If the password is lost there is no recovery. You must re-add accounts.
+- If you get no `refresh_token`, ensure `access_type=offline` and `prompt=consent` are set and you have not previously granted this client for the user. You can revoke previous grants at https://myaccount.google.com/permissions.
+
+## Environment variables
+
+- `GMAIL_MCP_DB_PASS`: Password for a locked DB (also accepted via `--pass`).
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: Used by `add` if flags are not provided.
+
+## MCP tools
+
+The server exposes these tools. Names and parameters are stable and validated with zod. Unless noted, responses mirror the Gmail REST API types.
+
+1) `list_accounts`
+
+- Input: `{}`
+- Output: `{ accounts: Array<{ id: string, email: string, displayName: string | null }> }`
+
+2) `search_mail`
+
+- Input: `{ query: string, account?: string, limit?: number }`
+- Behavior: If `account` omitted, searches all accounts up to a capped total (`limit` per account up to 200).
+- Output: `{ messages: Array<{ accountId: string, messageId: string | null, threadId: string | null }> }`
+
+3) `get_message`
+
+- Input: `{ account: string, messageId: string, body?: 'metadata' | 'snippet' | 'full' }`
+- Output: Gmail `Message` resource.
+
+4) `get_thread`
+
+- Input: `{ account: string, threadId: string, body?: 'metadata' | 'full' }`
+- Output: Gmail `Thread` resource.
+
+5) `download_attachment`
+
+- Input: `{ account: string, messageId: string, attachmentId: string }`
+- Output: Gmail `MessagePartBody` with base64url `data`.
+
+6) `label_message`
+
+- Input: `{ account: string, messageId: string, add?: string[], remove?: string[] }`
+- Writes: Adds/removes label IDs on a message. Disabled in `--read-only` mode.
+- Output: Gmail `Message` resource (post-modify).
+
+7) `send_message`
+
+- Input: `{ account: string, to: string, subject: string, text?: string, html?: string, replyToMessageId?: string }`
+- Behavior: Builds a minimal RFC822 message (text or html) and sends via `users.messages.send`. Attachments and custom headers are not yet supported. `replyToMessageId` is currently accepted but not used to set threading headers.
+- Writes: Sends email on the selected account. Disabled in `--read-only` mode.
+- Output: Gmail `Message` resource for the sent message.
+
+Account selection:
+
+- For any tool, `account` accepts either the account’s email or its internal `id` (see `list_accounts`).
+
+## Security model
+
+- Stored tokens are encrypted-at-rest when the DB is locked with `passwd`.
+- Losing the password means losing access to encrypted refresh tokens; there is no recovery.
+- Anyone who can launch the server or CLI with the password can access all linked inboxes.
 - No message bodies or tokens are logged.
-- Outgoing messages are base64url-encoded before calling Gmail's `users.messages.send` API, matching the format Gmail expects.
+
+## Troubleshooting
+
+- Node not recent enough: ensure Node >= 18.17 (`node -v`).
+- No refresh token after OAuth: revoke prior grants and try again, ensuring `prompt=consent` and first-time approval for this client.
+- Locked DB errors: provide `--pass` or set `GMAIL_MCP_DB_PASS` for all commands, including `list` and `remove`.
+- Device flow polling errors: if you see `authorization_pending` or `slow_down`, just wait; the CLI automatically retries.
+
+## Optional: global install
+
+You can install globally if you prefer shorter commands:
+
+```bash
+npm i -g @ideadesignmedia/gmail-mcp
+gmail-mcp --help
+```
+
+All examples above work the same without `npx` once installed globally.
