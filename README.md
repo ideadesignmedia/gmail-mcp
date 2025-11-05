@@ -27,6 +27,9 @@ export GOOGLE_CLIENT_SECRET=your_client_secret
 npx -y @ideadesignmedia/gmail-mcp add \
   --client-id "$GOOGLE_CLIENT_ID" \
   --client-secret "$GOOGLE_CLIENT_SECRET"
+
+# The CLI prints a URL; open it in your browser to consent.
+# After consenting, the local callback will display "Authentication complete".
 ```
 
 Add an account (device code flow; headless-safe):
@@ -126,7 +129,7 @@ Behavioral details:
 - When the DB is locked, all commands require a password (`--pass` or `GMAIL_MCP_DB_PASS`).
 - When unlocked, you can operate without a password and lock later with `passwd`.
 - `passwd --rotate --old-pass <old> --pass <new>` rotates the encryption KEK without re‑adding accounts.
-- `start --read-only` disables `send_message` and `label_message` tools and prevents modification APIs.
+- `start --read-only` disables `gmail-send_message` and `gmail-label_message` tools and prevents modification APIs.
 
 ## Google OAuth setup
 
@@ -135,6 +138,7 @@ Create a Web application OAuth client in Google Cloud Console and enable the Gma
 Loopback (default) flow requirements:
 
 - Authorized redirect URI: `http://127.0.0.1:43112/oauth2/callback`
+- The CLI prints the authorization URL; open it manually in your browser.
 - Scopes requested by this tool:
   - `https://www.googleapis.com/auth/gmail.readonly`
   - `https://www.googleapis.com/auth/gmail.modify`
@@ -156,41 +160,51 @@ Tips:
 
 ## MCP tools
 
-The server exposes these tools. Names and parameters are stable and validated with zod. Unless noted, responses mirror the Gmail REST API types.
+The server exposes these tools. Tool names are prefixed with `gmail.`. Names and parameters are stable and validated with zod. Unless noted, responses mirror the Gmail REST API types.
 
-1) `list_accounts`
+1) `gmail-list_accounts`
 
 - Input: `{}`
 - Output: `{ accounts: Array<{ id: string, email: string, displayName: string | null }> }`
 
-2) `search_mail`
+2) `gmail-search_mail`
 
 - Input: `{ query: string, account?: string, limit?: number }`
-- Behavior: If `account` omitted, searches all accounts up to a capped total (`limit` per account up to 200).
-- Output: `{ messages: Array<{ accountId: string, messageId: string | null, threadId: string | null }> }`
+- Behavior:
+  - If the query contains only date operators (`after:`, `before:`, `older_than:`, `newer_than:`) or is empty: results are sorted by `timestamp` descending (most recent first). Across multiple accounts, they are merged and sorted together.
+  - Otherwise (query includes free text or non-date operators): ordering matches Gmail’s native results per account; multi‑account queries preserve per‑account order without a global sort.
+- Output: Enriched results to reduce follow‑ups:
+  - `{ messages: Array<{ accountId: string, accountEmail: string, messageId: string, threadId: string, subject: string | null, snippet: string, from: string | null, to: string | null, cc: string | null, bcc: string | null, timestamp: number, date: string, labels: Array<{ id: string, name: string }> }> }`
+  - Notes: `timestamp` is ms since epoch; `date` is ISO8601 string. Use `gmail-get_message` for full decoded body and attachments.
+  - Query operators: Supports standard Gmail search syntax, including common operators like `from:`, `to:`, `subject:`, `label:`, `in:`, `is:` (e.g. `is:unread`, `is:starred`), `has:` (e.g. `has:attachment`), date filters `before:`, `after:`, relative `older_than:`/`newer_than:`, `cc:`, `bcc:`, `filename:`, size filters `larger:`/`smaller:`, boolean `OR`, and negation with `-`.
 
-3) `get_message`
+3) `gmail-get_message`
 
-- Input: `{ account: string, messageId: string, body?: 'metadata' | 'snippet' | 'full' }`
-- Output: Gmail `Message` resource.
+- Input: `{ account: string, messageId: string }`
+- Output: A simplified, human-readable object:
+  - `{ id: string, thread: string, labels: Array<{ id: string, name: string }>, timestamp: number, subject: string | null, from: string | null, to: string | null, cc: string | null, bcc: string | null, body: string, bodyType: 'text' | 'html', attachments: Array<{ filename: string, mimeType: string, size: number, attachmentId: string }> }`
+  - Notes: `body` is decoded (not base64url). Prefers `text/plain` when available, otherwise returns `text/html`. `timestamp` is ms since epoch.
 
-4) `get_thread`
+4) `gmail-get_thread`
 
-- Input: `{ account: string, threadId: string, body?: 'metadata' | 'full' }`
-- Output: Gmail `Thread` resource.
+- Input: `{ account: string, threadId: string }`
+- Output: A simplified thread with deduped messages ordered by time:
+  - `{ id: string, messages: Array<SimpleMessage> }`, where `SimpleMessage` matches `gmail-get_message` output.
+  - Each message includes resolved label names and a `timestamp` field.
 
-5) `download_attachment`
+5) `gmail-download_attachment`
 
 - Input: `{ account: string, messageId: string, attachmentId: string }`
 - Output: Gmail `MessagePartBody` with base64url `data`.
+- Tip: Use `gmail-get_message` first to list `attachments` and obtain an `attachmentId`.
 
-6) `label_message`
+6) `gmail-label_message`
 
 - Input: `{ account: string, messageId: string, add?: string[], remove?: string[] }`
 - Writes: Adds/removes label IDs on a message. Disabled in `--read-only` mode.
 - Output: Gmail `Message` resource (post-modify).
 
-7) `send_message`
+7) `gmail-send_message`
 
 - Input: `{ account: string, to: string, subject: string, text?: string, html?: string, replyToMessageId?: string }`
 - Behavior: Builds a minimal RFC822 message (text or html) and sends via `users.messages.send`. Attachments and custom headers are not yet supported. `replyToMessageId` is currently accepted but not used to set threading headers.
@@ -199,7 +213,7 @@ The server exposes these tools. Names and parameters are stable and validated wi
 
 Account selection:
 
-- For any tool, `account` accepts either the account’s email or its internal `id` (see `list_accounts`).
+- For any tool, `account` accepts either the account’s email or its internal `id` (see `gmail-list_accounts`).
 
 ## Security model
 

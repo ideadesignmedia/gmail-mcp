@@ -1,6 +1,6 @@
 {
   "name": "@ideadesignmedia/gmail-mcp",
-  "version": "0.1.0",
+  "version": "0.1.7",
   "description": "Private MCP server and CLI for linking multiple Gmail inboxes and operating over them",
   "license": "MIT",
   "bin": {
@@ -21,7 +21,6 @@
     "@ideadesignmedia/open-ai.js": "^2.2.0",
     "commander": "^12.1.0",
     "googleapis": "^144.0.0",
-    "open": "^10.1.0",
     "sqlite3": "^5.1.7",
     "zod": "^3.23.8"
   },

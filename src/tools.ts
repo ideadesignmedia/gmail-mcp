@@ -10,13 +10,28 @@ import {
   GmailConfig,
   listAccounts,
   getAccountByKey,
-  searchMessages,
-  getMessage,
-  getThread,
+  searchMessagesSimple,
+  getMessageSimple,
+  getThreadSimple,
   getAttachment,
   modifyLabels,
   sendMessage
 } from './gmail';
+
+function isDateOnlyQuery(q: string): boolean {
+  const s = (q || '').trim();
+  if (!s.length) return true;
+  const tokens = s.split(/\s+/);
+  const allowed = /^(after|before|older_than|newer_than):\S+$/i;
+  for (let t of tokens) {
+    // Strip simple wrappers/negation
+    t = t.replace(/[()]/g, '');
+    if (t === '' || t.toUpperCase() === 'OR' || t.toUpperCase() === 'AND') continue;
+    if (t.startsWith('-')) t = t.slice(1);
+    if (!allowed.test(t)) return false;
+  }
+  return true;
+}
 
 export function buildTools(db: DB, dek: Buffer | undefined, readOnly = false): McpToolHandlerOptions[] {
   const cfg: GmailConfig = { db, dek, readOnly };
@@ -32,15 +47,13 @@ export function buildTools(db: DB, dek: Buffer | undefined, readOnly = false): M
   const getMessageInput = z
     .object({
       account: z.string(),
-      messageId: z.string(),
-      body: z.enum(['metadata', 'snippet', 'full']).optional()
+      messageId: z.string()
     })
     .strict();
   const getThreadInput = z
     .object({
       account: z.string(),
-      threadId: z.string(),
-      body: z.enum(['metadata', 'full']).optional()
+      threadId: z.string()
     })
     .strict();
   const downloadAttachmentInput = z
@@ -74,8 +87,8 @@ export function buildTools(db: DB, dek: Buffer | undefined, readOnly = false): M
       tool: defineFunctionTool({
         type: 'function',
         function: {
-          name: 'list_accounts',
-          description: 'List linked Gmail accounts',
+          name: 'gmail-list_accounts',
+          description: 'List linked Gmail accounts (id, email, displayName). Use id or email in other tools.',
           parameters: defineObjectSchema({
             type: 'object',
             properties: {},
@@ -94,8 +107,8 @@ export function buildTools(db: DB, dek: Buffer | undefined, readOnly = false): M
       tool: defineFunctionTool({
         type: 'function',
         function: {
-          name: 'search_mail',
-          description: 'Search messages by Gmail query string. If account is omitted, searches all accounts with a capped total.',
+          name: 'gmail-search_mail',
+          description: 'Search Gmail with a query string (supports native operators like: from:, to:, subject:, label:, in:, is:, has:, before:, after:, older_than:, newer_than:, cc:, bcc:, filename:, larger:/smaller:, OR, and - for negation). Returns enriched results: accountId, accountEmail, messageId, threadId, subject, snippet, from, to, cc, bcc, timestamp, date, labels (id+name). Use gmail-get_message for full body and attachments.',
           parameters: defineObjectSchema({
             type: 'object',
             additionalProperties: false,
@@ -111,46 +124,46 @@ export function buildTools(db: DB, dek: Buffer | undefined, readOnly = false): M
       handler: async raw => {
         const input = searchMailInput.parse(raw ?? {});
         const { query, account, limit } = input;
+        const cap = limit ?? 50;
+        const dateOnly = isDateOnlyQuery(query);
         if (account) {
           const acc = await getAccountByKey(db, account);
           if (!acc) throw new Error('Account not found');
-          const msgs = await searchMessages(cfg, acc.id, query, limit ?? 50);
-          return {
-            messages: (msgs || []).map(m => ({
-              accountId: acc.id,
-              messageId: m.id ?? null,
-              threadId: m.threadId ?? null
-            }))
-          };
+          const msgs = await searchMessagesSimple(cfg, acc.id, acc.email, query, cap);
+          // Sorting: if purely date-based query, sort by most recent; else preserve Gmail order
+          const outMsgs = dateOnly ? [...msgs].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)) : msgs;
+          return { messages: outMsgs } as unknown as JsonValue;
         }
         const rows = await listAccounts(db);
-        const out: Array<{ accountId: string; messageId: string | null; threadId: string | null }> = [];
+        const out: any[] = [];
         for (const acc of rows) {
-          const remaining = (limit ?? 50) - out.length;
+          const remaining = cap - out.length;
           if (remaining <= 0) break;
-          const msgs = await searchMessages(cfg, acc.id, query, Math.min(remaining, 25));
-          for (const m of msgs || []) {
-            out.push({ accountId: acc.id, messageId: m.id ?? null, threadId: m.threadId ?? null });
-            if (out.length >= (limit ?? 50)) break;
+          const per = Math.min(remaining, 25);
+          const msgs = await searchMessagesSimple(cfg, acc.id, acc.email, query, per);
+          for (const m of msgs) {
+            out.push(m);
+            if (out.length >= cap) break;
           }
-          if (out.length >= (limit ?? 50)) break;
+          if (out.length >= cap) break;
         }
-        return { messages: out };
+        // Sorting across accounts: if date-only query, sort by most recent; else preserve per-account order
+        if (dateOnly) out.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        return { messages: out } as unknown as JsonValue;
       }
     },
     {
       tool: defineFunctionTool({
         type: 'function',
         function: {
-          name: 'get_message',
-          description: 'Get a single message',
+          name: 'gmail-get_message',
+          description: 'Get a single message as a simple, human-readable object: id, thread, labels, subject, body (decoded), from, to, cc, bcc, attachments.',
           parameters: defineObjectSchema({
             type: 'object',
             additionalProperties: false,
             properties: {
               account: { type: 'string' },
-              messageId: { type: 'string' },
-              body: { type: 'string', enum: ['metadata', 'snippet', 'full'] }
+              messageId: { type: 'string' }
             },
             required: ['account', 'messageId']
           } as const)
@@ -160,7 +173,7 @@ export function buildTools(db: DB, dek: Buffer | undefined, readOnly = false): M
         const input = getMessageInput.parse(raw ?? {});
         const acc = await getAccountByKey(db, input.account);
         if (!acc) throw new Error('Account not found');
-        const data = await getMessage(cfg, acc.id, input.messageId, input.body || 'metadata');
+        const data = await getMessageSimple(cfg, acc.id, input.messageId);
         return data as unknown as JsonValue;
       }
     },
@@ -168,15 +181,14 @@ export function buildTools(db: DB, dek: Buffer | undefined, readOnly = false): M
       tool: defineFunctionTool({
         type: 'function',
         function: {
-          name: 'get_thread',
-          description: 'Get a single thread',
+          name: 'gmail-get_thread',
+          description: 'Get a thread by threadId with deduped, simplified messages (id, thread, labels with names, timestamp, subject, body, from, to, cc, bcc, attachments).',
           parameters: defineObjectSchema({
             type: 'object',
             additionalProperties: false,
             properties: {
               account: { type: 'string' },
-              threadId: { type: 'string' },
-              body: { type: 'string', enum: ['metadata', 'full'] }
+              threadId: { type: 'string' }
             },
             required: ['account', 'threadId']
           } as const)
@@ -186,7 +198,7 @@ export function buildTools(db: DB, dek: Buffer | undefined, readOnly = false): M
         const input = getThreadInput.parse(raw ?? {});
         const acc = await getAccountByKey(db, input.account);
         if (!acc) throw new Error('Account not found');
-        const data = await getThread(cfg, acc.id, input.threadId);
+        const data = await getThreadSimple(cfg, acc.id, input.threadId);
         return data as unknown as JsonValue;
       }
     },
@@ -194,8 +206,8 @@ export function buildTools(db: DB, dek: Buffer | undefined, readOnly = false): M
       tool: defineFunctionTool({
         type: 'function',
         function: {
-          name: 'download_attachment',
-          description: 'Download an attachment by messageId and attachmentId',
+          name: 'gmail-download_attachment',
+          description: 'Download an attachment by messageId and attachmentId. Returns base64url data and metadata from Gmail.',
           parameters: defineObjectSchema({
             type: 'object',
             additionalProperties: false,
@@ -220,8 +232,8 @@ export function buildTools(db: DB, dek: Buffer | undefined, readOnly = false): M
       tool: defineFunctionTool({
         type: 'function',
         function: {
-          name: 'label_message',
-          description: 'Add or remove label ids on a message',
+          name: 'gmail-label_message',
+          description: 'Add or remove Gmail label IDs on a message. Provide labelIds to add/remove. Disabled in read-only mode.',
           parameters: defineObjectSchema({
             type: 'object',
             additionalProperties: false,
@@ -247,8 +259,8 @@ export function buildTools(db: DB, dek: Buffer | undefined, readOnly = false): M
       tool: defineFunctionTool({
         type: 'function',
         function: {
-          name: 'send_message',
-          description: 'Send an email using raw RFC822 content or fields',
+          name: 'gmail-send_message',
+          description: 'Send an email. Provide to, subject, and text or html body. Replies do not yet set threading headers.',
           parameters: defineObjectSchema({
             type: 'object',
             additionalProperties: false,

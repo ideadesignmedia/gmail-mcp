@@ -1,7 +1,6 @@
 
 import http from 'http';
 import { URL } from 'url';
-import open from 'open';
 import { google } from 'googleapis';
 
 type AddOptions = {
@@ -53,10 +52,8 @@ async function loopbackFlow(opts: AddOptions): Promise<OAuthResult> {
       }
     });
     server.listen(port, '127.0.0.1', () => {
-      open(url).catch(() => {
-        console.error('Open browser failed. Please visit this URL manually:');
-        console.error(url);
-      });
+      console.error('Please finish authentication by visiting this URL in your browser:');
+      console.error(url);
     });
   });
 

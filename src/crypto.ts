@@ -5,7 +5,11 @@ export type KdfParams = { N: number; r: number; p: number; dkLen: number };
 
 export async function deriveKek(password: string, salt: Buffer, params: KdfParams): Promise<Buffer> {
   return new Promise((res, rej) => {
-    crypto.scrypt(password, salt, params.dkLen, { N: params.N, r: params.r, p: params.p }, (err, key) => {
+    const baseMem = 128 * params.N * params.r;
+    const extraMem = 256 * params.r * params.p;
+    const estimated = baseMem + extraMem;
+    const maxmem = Math.max(64 * 1024 * 1024, estimated + 16 * 1024 * 1024);
+    crypto.scrypt(password, salt, params.dkLen, { N: params.N, r: params.r, p: params.p, maxmem }, (err, key) => {
       if (err) rej(err);
       else res(key as Buffer);
     });
